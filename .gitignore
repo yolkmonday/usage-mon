@@ -1,0 +1,14 @@
+# Build artifacts SwiftPM
+MenuBar/.build/
+MenuBar/dist/
+*.o
+*.swiftmodule
+
+# macOS
+.DS_Store
+._*
+
+# Cache / data lokal
+*.log
+scan-cache.json
+prices.json

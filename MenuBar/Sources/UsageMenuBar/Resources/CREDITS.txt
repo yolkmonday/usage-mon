@@ -1,0 +1,7 @@
+Menu bar icon: "gauge" from Lucide (https://lucide.dev)
+License: ISC
+Source: https://icon-sets.iconify.design/lucide/gauge/
+Downloaded via Iconify: https://api.iconify.design/lucide/gauge.svg
+
+gauge.pdf  = versi vector (template) yang dipakai sebagai ikon menu bar
+gauge.svg  = sumber asli (referensi)
