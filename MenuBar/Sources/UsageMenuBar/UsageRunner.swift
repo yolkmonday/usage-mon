@@ -30,14 +30,18 @@ final class UsageRunner {
         let fm = FileManager.default
         var candidates: [URL] = []
 
-        // 1) relatif terhadap executable: .../MenuBar/.build/<config>/UsageMenuBar
+        // 1) CLI hasil install Homebrew (punya shebang python3 sendiri, executable langsung)
+        candidates.append(URL(fileURLWithPath: "/opt/homebrew/bin/usage-mon"))
+        candidates.append(URL(fileURLWithPath: "/usr/local/bin/usage-mon"))
+
+        // 2) relatif terhadap executable: .../MenuBar/.build/<config>/UsageMenuBar
         let exe = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
         var dir = exe.deletingLastPathComponent()
         for _ in 0..<6 {
             candidates.append(dir.appendingPathComponent("usage-mon"))
             dir = dir.deletingLastPathComponent()
         }
-        // 2) lokasi default proyek
+        // 3) lokasi default proyek (dev fallback)
         let home = fm.homeDirectoryForCurrentUser
         candidates.append(home.appendingPathComponent("Dev/usage-mon/usage-mon"))
         candidates.append(home.appendingPathComponent("bin/usage-mon"))
@@ -73,11 +77,23 @@ final class UsageRunner {
         process.standardError = errPipe
 
         try process.run()
+
+        // Baca stdout & stderr secara paralel supaya child tidak deadlock:
+        // kalau stderr > 64KB (buffer pipe default OS) sementara kita masih
+        // menunggu stdout selesai, child akan blok nulis dan proses ini hang.
+        let errQueue = DispatchQueue(label: "usage-mon.stderr-drain")
+        var errData = Data()
+        let errDone = DispatchSemaphore(value: 0)
+        errQueue.async {
+            errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            errDone.signal()
+        }
+
         let data = outPipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
+        errDone.wait()
 
         if process.terminationStatus != 0 {
-            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
             let msg = String(data: errData, encoding: .utf8) ?? "exit \(process.terminationStatus)"
             throw RunError.failed(msg.isEmpty ? "exit \(process.terminationStatus)" : msg)
         }

@@ -12,6 +12,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if Self.isAlreadyRunning() {
+            NSApp.terminate(nil)
+            return
+        }
+
         NSApp.setActivationPolicy(.accessory)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -44,6 +49,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] in self?.updateTitle() }
             .store(in: &cancellables)
+    }
+
+    /// Cegah instance kedua jalan bersamaan (mis. buka app 2x dari Finder).
+    /// Untuk dev build (`swift run`) bundleIdentifier bisa nil -> anggap tidak duplikat.
+    static func isAlreadyRunning() -> Bool {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return false }
+        let myPID = ProcessInfo.processInfo.processIdentifier
+        return NSWorkspace.shared.runningApplications.contains { app in
+            app.bundleIdentifier == bundleID && app.processIdentifier != myPID
+        }
     }
 
     /// Ikon gauge dari resource bundle. Template agar ikut warna status.

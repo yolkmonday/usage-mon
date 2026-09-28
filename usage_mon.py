@@ -9,9 +9,9 @@ Sumber data:
 Pemakaian:
   usage_mon.py                 ringkasan default (7 hari terakhir)
   usage_mon.py --days 30       ubah rentang hari
-  usage_mon.py --daily         tabel tren per hari
-  usage_mon.py --models        breakdown per model
-  usage_mon.py --projects      breakdown per project (Claude)
+  usage_mon.py --section daily     tabel tren per hari
+  usage_mon.py --section models    breakdown per model
+  usage_mon.py --section projects  breakdown per project (Claude)
   usage_mon.py --json          output JSON mentah
   usage_mon.py --watch 5       refresh tiap 5 detik
 """
@@ -155,19 +155,31 @@ def parse_iso(ts: str) -> datetime | None:
 # Limit Claude: dibaca dari API OAuth resmi memakai token di Keychain.
 # Token tidak pernah ditulis ke disk/cache.
 # ---------------------------------------------------------------------------
+def _read_credentials_raw() -> str | None:
+    """macOS: Keychain. Linux/lainnya: ~/.claude/.credentials.json."""
+    if sys.platform == "darwin":
+        try:
+            out = subprocess.run(
+                ["security", "find-generic-password", "-s", CLAUDE_KEYCHAIN_SERVICE, "-w"],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            out = None
+        if out and out.returncode == 0 and out.stdout.strip():
+            return out.stdout
+    try:
+        return (Path.home() / ".claude" / ".credentials.json").read_text()
+    except OSError:
+        return None
+
+
 def _claude_oauth_token() -> str | None:
-    """Ambil access token OAuth Claude Code dari macOS Keychain."""
-    try:
-        out = subprocess.run(
-            ["security", "find-generic-password", "-s", CLAUDE_KEYCHAIN_SERVICE, "-w"],
-            capture_output=True, text=True, timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if out.returncode != 0 or not out.stdout.strip():
+    """Ambil access token OAuth Claude Code (Keychain atau file credentials)."""
+    raw = _read_credentials_raw()
+    if not raw:
         return None
     try:
-        data = json.loads(out.stdout)
+        data = json.loads(raw)
     except json.JSONDecodeError:
         return None
     return (data.get("claudeAiOauth") or {}).get("accessToken")
@@ -177,7 +189,7 @@ def fetch_claude_limits() -> dict | None:
     """Kembalikan dict limit Claude, atau {'error': ...} bila gagal."""
     token = _claude_oauth_token()
     if not token:
-        return {"error": "token OAuth tidak ditemukan di Keychain"}
+        return {"error": "token OAuth Claude tidak ditemukan (Keychain / ~/.claude/.credentials.json)"}
 
     req = urllib.request.Request(
         CLAUDE_USAGE_URL,
@@ -202,7 +214,7 @@ def fetch_claude_limits() -> dict | None:
     limits = []
     for item in data.get("limits") or []:
         kind = item.get("kind")
-        pct = item.get("percent", 0)
+        pct = item.get("percent") or 0
         # tampilkan: session & weekly_all selalu; scoped hanya bila aktif/terpakai
         if kind == "weekly_scoped" and not item.get("is_active") and pct == 0:
             continue
@@ -240,6 +252,17 @@ def fetch_claude_limits() -> dict | None:
 # ---------------------------------------------------------------------------
 # Parser: Claude
 # ---------------------------------------------------------------------------
+def _merge_cache(root: Path, new_cache: dict) -> None:
+    """Ganti entry cache di bawah `root` dengan hasil scan terbaru.
+
+    Entry sumber lain dipertahankan; file yang sudah tidak ada ikut terbuang.
+    """
+    prefix = str(root) + os.sep
+    merged = {k: v for k, v in _load_cache().items() if not k.startswith(prefix)}
+    merged.update(new_cache)
+    _save_cache(merged)
+
+
 def scan_claude(since: datetime) -> Result:
     res = Result(source="claude")
     if not CLAUDE_DIR.exists():
@@ -265,9 +288,7 @@ def scan_claude(since: datetime) -> Result:
             entries = parse_claude_file(path)
         new_cache[key] = {"sig": list(sig), "project": project, "entries": entries}
 
-    merged = _load_cache()
-    merged.update(new_cache)
-    _save_cache(merged)
+    _merge_cache(CLAUDE_DIR, new_cache)
 
     for meta in new_cache.values():
         project = meta["project"]
@@ -389,10 +410,7 @@ def scan_codex(since: datetime) -> Result:
             parsed = parse_codex_file(path)
         new_cache[key] = {"sig": list(sig), **parsed}
 
-    # gabung dengan cache Claude yang sudah ditulis sebelumnya (hindari saling hapus)
-    merged = _load_cache()
-    merged.update(new_cache)
-    _save_cache(merged)
+    _merge_cache(CODEX_DIR, new_cache)
 
     latest_rl_ts = ""
     for meta in new_cache.values():
@@ -400,27 +418,23 @@ def scan_codex(since: datetime) -> Result:
         events = meta.get("events", [])
         if not events:
             continue
-        # total_token_usage kumulatif per sesi -> pakai nilai maksimum per hari, selisih antar hari
-        per_day: dict[str, list] = {}
-        for ts, inp, out, cr in events:
-            day = ts[:10]
-            if day not in per_day or inp + out > per_day[day][0] + per_day[day][1]:
-                per_day[day] = [inp, out, cr, ts]
+        # total_token_usage kumulatif per sesi -> selisih antar event, dibucket per hari event.
+        # Counter turun (reset konteks / compaction) = segmen baru mulai dari 0.
+        p = price_for(model, CODEX_PRICES, {"input": 1.25, "output": 10.0, "cache_read": 0.125})
         prev_in = prev_out = prev_cr = 0
-        for day in sorted(per_day):
-            inp_t, out_t, cr_t, ts = per_day[day]
-            if inp_t < prev_in:
+        for ts, inp_t, out_t, cr_t in events:
+            if inp_t < prev_in or out_t < prev_out:
                 prev_in = prev_out = prev_cr = 0
-            inp = max(inp_t - prev_in, 0)
-            out = max(out_t - prev_out, 0)
+            inp = inp_t - prev_in
+            out = out_t - prev_out
             cr = max(cr_t - prev_cr, 0)
             prev_in, prev_out, prev_cr = inp_t, out_t, cr_t
             when = parse_iso(ts)
-            if when is None or when < since:
+            if when is None or when < since or (inp == 0 and out == 0):
                 continue
             uncached = max(inp - cr, 0)
-            p = price_for(model, CODEX_PRICES, {"input": 1.25, "output": 10.0, "cache_read": 0.125})
             cost = (uncached * p["input"] + cr * p.get("cache_read", 0.125) + out * p["output"]) / 1_000_000
+            day = when.strftime("%Y-%m-%d")
             for b in (res.total, res.daily[day], res.models[model]):
                 b.add(uncached, out, 0, cr, cost)
         # rate limit terbaru diambil dari file yang event-nya paling akhir

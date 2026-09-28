@@ -253,7 +253,11 @@ enum Format {
     }
 
     static func reset(iso: String?) -> String {
-        guard let iso, let date = ISO8601DateFormatter.flexible.date(from: iso) else { return "" }
+        guard let iso else { return "" }
+        // Coba format dengan fractional seconds dulu, lalu fallback ke tanpa fraction
+        // (mis. "2026-09-28T08:49:59+00:00" tidak punya bagian pecahan detik).
+        guard let date = ISO8601DateFormatter.flexible.date(from: iso)
+            ?? ISO8601DateFormatter.plain.date(from: iso) else { return "" }
         let f = DateFormatter()
         f.dateFormat = "MM-dd HH:mm"
         return "reset " + f.string(from: date)
@@ -271,6 +275,12 @@ extension ISO8601DateFormatter {
     static let flexible: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    static let plain: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
         return f
     }()
 }

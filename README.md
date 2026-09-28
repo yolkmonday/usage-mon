@@ -5,6 +5,13 @@ Pantau pemakaian **Claude Code** dan **Codex**: CLI + app menu bar macOS.
 - **CLI** (`usage_mon.py`) — token, biaya, tren, limit
 - **Menu bar** (`MenuBar/`) — app Swift yang menampilkan kuota di bar atas; klik untuk popup detail
 
+## Install (Homebrew)
+
+```bash
+brew install yolkmonday/tap/usage-mon             # CLI (macOS & Linux)
+brew install --cask yolkmonday/tap/usage-mon-app  # app menu bar (macOS)
+```
+
 ## CLI
 
 ```bash
@@ -97,7 +104,8 @@ bila proyek dipindah.
 
 **Kenapa limit Claude tidak ada di file lokal?** Claude Code tidak menyimpan data kuota
 (5 jam / mingguan) ke disk. Data itu hanya tersedia lewat API. Token OAuth Claude Code
-tersimpan di macOS Keychain (service `Claude Code-credentials`); CLI ini membacanya
+tersimpan di macOS Keychain (service `Claude Code-credentials`), atau di
+`~/.claude/.credentials.json` pada Linux; CLI ini membacanya
 (read-only, tidak pernah ditulis ke cache) lalu memanggil endpoint usage resmi.
 
 - Limit akan tampil di bagian **Limit Claude** (5 jam, mingguan, dan per-model bila aktif).

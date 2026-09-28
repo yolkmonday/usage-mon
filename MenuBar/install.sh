@@ -11,6 +11,10 @@ if [ ! -d "$APP_SRC" ]; then
   exit 1
 fi
 
+echo "==> Menutup instance yang sedang jalan (jika ada)"
+osascript -e 'quit app "UsageMenuBar"' >/dev/null 2>&1 || true
+pkill -x UsageMenuBar || true
+
 echo "==> Menyalin ke $APP_DST"
 rm -rf "$APP_DST"
 cp -R "$APP_SRC" "$APP_DST"
@@ -23,5 +27,6 @@ echo "==> Selesai."
 echo "Agar otomatis jalan saat login:"
 echo "  System Settings > General > Login Items > tambahkan $APP_DST"
 echo
-echo "Catatan: app memanggil ~/Dev/usage-mon/usage-mon."
+echo "Catatan: app mencari CLI usage-mon dari Homebrew dulu (/opt/homebrew/bin atau"
+echo "/usr/local/bin), baru fallback ke ~/Dev/usage-mon/usage-mon."
 echo "Jika lokasi proyek dipindah, ubah di UsageRunner.locateScript()."
